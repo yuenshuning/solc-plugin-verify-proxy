@@ -1,21 +1,20 @@
 {
-  "name": "verify-proxy",
-  "version": "0.0.3",
-  "description": "Verify your deployed smart contracts on Etherscan from the Truffle CLI",
-  "repository": "https://github.com/yuenshuning/truffle-plugin-verify",
+  "name": "solc-plugin-verify-proxy",
+  "version": "0.0.1",
+  "description": "Verify your deployed smart contracts (compiled with solc) on Etherscan from nodejs",
+  "repository": "https://github.com/yuenshuning/solc-plugin-verify-proxy",
   "main": "verify.js",
   "files": [
     "constants.js",
     "util.js",
-    "verify.js",
-    "truffle-plugin.json"
+    "verify.js"
   ],
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "lint": "eslint ."
   },
   "keywords": [
-    "truffle",
+    "solc",
     "plugin",
     "ethereum",
     "etherscan",

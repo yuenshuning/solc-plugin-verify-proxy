@@ -28,21 +28,22 @@ module.exports = async (config) => {
   }
 
   const options = await parseConfig(config)
-
-  // Verify each contract
-  const contractNameAddressPairs = config._.slice(1)
-
   // Track which contracts failed verification
   const failedContracts = []
-  for (const contractNameAddressPair of contractNameAddressPairs) {
+  // Verify each contract
+  for (const contractNameAddressPair of config.contract_name_address_pairs) {
     logger.info(`Verifying ${contractNameAddressPair}`)
     try {
       const [contractName, contractAddress] = contractNameAddressPair.split('@')
 
-      const artifact = getArtifact(contractName, options)
+      let artifact = getArtifact(contractName, options)
+      parseArtifact(artifact)
 
       if (contractAddress) {
         logger.debug(`Custom address ${contractAddress} specified`)
+        if (!artifact.networks) {
+          artifact.networks = {}
+        }
         if (!artifact.networks[`${options.networkId}`]) {
           artifact.networks[`${options.networkId}`] = {}
         }
@@ -85,11 +86,13 @@ module.exports = async (config) => {
     logger
   )
 
-  logger.info(`Successfully verified ${contractNameAddressPairs.length} contract(s).`)
+  logger.info(`Successfully verified ${config.contract_name_address_pairs.length} contract(s).`)
+
+  return failedContracts.length === 0
 }
 
 const parseConfig = async (config) => {
-  const provider = config.provider
+  const provider = config.networks && config.networks[config.network].provider()
   const networkConfig = config.networks && config.networks[config.network]
   const { chainId, networkId } = await getNetwork(config, logger)
 
@@ -107,7 +110,7 @@ const parseConfig = async (config) => {
     explorerUrl = networkConfig.verify.explorerUrl
   }
 
-  enforce(config._.length > 1, 'No contract name(s) specified', logger)
+  enforce(config.contract_name_address_pairs.length > 0, 'No contract name(s) specified', logger)
   enforce(networkId !== '*', 'network_id bypassed with "*" in truffle-config.js.', logger)
 
   const projectDir = config.working_directory
@@ -145,6 +148,13 @@ const getArtifact = (contractName, options) => {
   return JSON.parse(JSON.stringify(require(artifactPath)))
 }
 
+const parseArtifact = (artifact) => {
+  const { compilationTarget, contractName } = extractContractName(artifact)
+
+  artifact.compilationTarget = compilationTarget
+  artifact.contractName = contractName
+}
+
 const verifyContract = async (artifact, options) => {
   const res = await sendVerifyRequest(artifact, options)
   enforceOrThrow(res.data, `Failed to connect to Etherscan API at url ${options.apiUrl}`)
@@ -163,10 +173,7 @@ const sendVerifyRequest = async (artifact, options) => {
     ? options.forceConstructorArgs
     : await fetchConstructorValues(artifact, options)
   const inputJSON = getInputJSON(artifact, options)
-
-  // Remove the 'project:' prefix that was added in Truffle v5.3.14
-  const relativeFilePath = artifact.ast.absolutePath.replace('project:', '')
-
+  
   const postQueries = {
     apikey: options.apiKey,
     module: 'contract',
@@ -174,7 +181,7 @@ const sendVerifyRequest = async (artifact, options) => {
     contractaddress: artifact.networks[`${options.networkId}`].address,
     sourceCode: JSON.stringify(inputJSON),
     codeformat: 'solidity-standard-json-input',
-    contractname: `${relativeFilePath}:${artifact.contractName}`,
+    contractname: `${artifact.compilationTarget}:${artifact.contractName}`,
     compilerversion: compilerVersion,
     constructorArguements: encodedConstructorArgs
   }
@@ -195,6 +202,15 @@ const extractCompilerVersion = (artifact) => {
   const compilerVersion = `v${metadata.compiler.version}`
 
   return compilerVersion
+}
+
+const extractContractName = (artifact) => {
+  const metadata = JSON.parse(artifact.metadata)
+
+  const compilationTarget = Object.keys(metadata.settings.compilationTarget)[0]
+  const contractName = Object.values(metadata.settings.compilationTarget)[0]
+
+  return { compilationTarget, contractName}
 }
 
 const fetchConstructorValues = async (artifact, options) => {
@@ -223,7 +239,8 @@ const fetchConstructorValues = async (artifact, options) => {
   // The last part of the transaction data is the constructor arguments
   // If it can't be accessed for any reason, try using empty constructor arguments
   if (res.data && res.data.status === RequestStatus.OK && res.data.result[0] !== undefined) {
-    const constructorArgs = res.data.result[0].input.substring(artifact.bytecode.length)
+    // +2: '0x' + artifact.evm.bytecode.object
+    const constructorArgs = res.data.result[0].input.substring(artifact.evm.bytecode.object.length + 2)
     logger.debug(`Constructor parameters retrieved: 0x${constructorArgs}`)
     return constructorArgs
   } else {
@@ -234,14 +251,13 @@ const fetchConstructorValues = async (artifact, options) => {
 
 const getInputJSON = (artifact, options) => {
   const metadata = JSON.parse(artifact.metadata)
-  const libraries = getLibraries(artifact, options)
 
   // Sort the source files so that the "main" contract is on top
   const orderedSources = Object.keys(metadata.sources)
     .reverse()
     .sort((a, b) => {
-      if (a === artifact.ast.absolutePath) return -1
-      if (b === artifact.ast.absolutePath) return 1
+      if (a === artifact.compilationTarget) return -1
+      if (b === artifact.compilationTarget) return 1
       return 0
     })
 
@@ -266,38 +282,10 @@ const getInputJSON = (artifact, options) => {
       remappings: metadata.settings.remappings,
       optimizer: metadata.settings.optimizer,
       evmVersion: metadata.settings.evmVersion,
-      libraries
     }
   }
 
   return inputJSON
-}
-
-const getLibraries = (artifact, options) => {
-  const libraries = {
-    // Example data structure of libraries object in Standard Input JSON
-    // 'ConvertLib.sol': {
-    //   'ConvertLib': '0x...',
-    //   'OtherLibInSameSourceFile': '0x...'
-    // }
-  }
-
-  const links = artifact.networks[`${options.networkId}`].links || {}
-
-  for (const libraryName in links) {
-    // Retrieve the source path for this library
-    const libraryArtifact = getArtifact(libraryName, options)
-
-    // Remove the 'project:' prefix that was added in Truffle v5.3.14
-    const librarySourceFile = libraryArtifact.ast.absolutePath.replace('project:', '')
-
-    // Add the library to the object of libraries for this source path
-    const librariesForSourceFile = libraries[librarySourceFile] || {}
-    librariesForSourceFile[libraryName] = links[libraryName]
-    libraries[librarySourceFile] = librariesForSourceFile
-  }
-
-  return libraries
 }
 
 const verificationStatus = async (guid, options, action = 'checkverifystatus') => {

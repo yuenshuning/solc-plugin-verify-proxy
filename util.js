@@ -70,7 +70,7 @@ const getAbsolutePath = (contractPath, options) => {
  * @returns {Promise<number>} Chain ID & Network ID if they could be retrieved, or else config'd network ID
  */
 const getNetwork = async (config, logger) => {
-  const send = getRpcSendFunction(config.provider)
+  const send = getRpcSendFunction(config.networks[config.network].provider())
 
   const fallback = { chainId: config.network_id, networkId: config.network_id }
 
