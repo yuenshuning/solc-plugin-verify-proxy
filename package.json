@@ -1,6 +1,6 @@
 {
   "name": "solc-plugin-verify-proxy",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Verify your deployed smart contracts (compiled with solc) on Etherscan from nodejs",
   "repository": "https://github.com/yuenshuning/solc-plugin-verify-proxy",
   "main": "verify.js",
